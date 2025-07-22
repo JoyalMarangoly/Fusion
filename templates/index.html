@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IMU/GNSS Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="icon" type="image/svg+xml" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/geo-alt.svg">
+    <style>
+        body { background: linear-gradient(135deg, #e0e7ff 0%, #f8fafc 100%); min-height: 100vh; }
+        .card { box-shadow: 0 4px 24px rgba(0,0,0,0.08); border-radius: 1.2rem; }
+        .recording-dot {
+            height: 14px; width: 14px; border-radius: 50%; background: #e63946;
+            display: inline-block; margin-right: 8px; animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 #e6394633; }
+            70% { box-shadow: 0 0 0 10px #e6394600; }
+            100% { box-shadow: 0 0 0 0 #e6394600; }
+        }
+        .table-responsive { max-height: 50vh; overflow-y: auto; }
+        .footer { color: #888; font-size: 0.95em; margin-top: 2rem; }
+        .download-link { font-size: 1.1em; }
+        .spinner-border { width: 1.5rem; height: 1.5rem; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold">IMU/GNSS Logger</span>
+            <div>
+                <a class="btn btn-outline-secondary me-2" href="/">Home</a>
+                <a class="btn btn-outline-secondary me-2" href="/visualize">Visualize</a>
+                <a class="btn btn-primary" href="/calibrate">Calibrate</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-8 col-md-10">
+                <div class="card p-4 mb-4">
+                    <div class="d-flex align-items-center mb-3">
+                        <button id="start-btn" class="btn btn-success me-2"><i class="bi bi-record-circle"></i> Start Recording</button>
+                        <button id="stop-btn" class="btn btn-danger me-3" disabled><i class="bi bi-stop-circle"></i> Stop</button>
+                        <span id="record-status" class="ms-2"></span>
+                    </div>
+                    <div id="download-link" class="download-link mb-2"></div>
+                    <div id="log-container" class="table-responsive"></div>
+                </div>
+            </div>
+        </div>
+        <!-- 2D Kalman Filter Controls and Log -->
+        <div class="row justify-content-center">
+            <div class="col-lg-8 col-md-10">
+                <div class="card p-4 mb-4">
+                    <div class="d-flex align-items-center mb-3">
+                        <button id="start-btn-2d" class="btn btn-success me-2"><i class="bi bi-record-circle"></i> Start Recording 2D</button>
+                        <button id="stop-btn-2d" class="btn btn-danger me-3" disabled><i class="bi bi-stop-circle"></i> Stop 2D</button>
+                        <span id="record-status-2d" class="ms-2"></span>
+                    </div>
+                    <div id="download-link-2d" class="download-link mb-2"></div>
+                    <div id="log-container-2d" class="table-responsive"></div>
+                </div>
+            </div>
+        </div>
+        <footer class="footer text-center">
+            <hr>
+            <span>Field Data Logging &mdash; <a href="/calibrate">Calibrate</a></span>
+        </footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusSpan = document.getElementById('record-status');
+        const downloadLinkDiv = document.getElementById('download-link');
+        const logContainer = document.getElementById('log-container');
+        let pollInterval = null;
+        let currentLogFile = null;
+        let isRecording = false;
+
+        function setRecordingUI(recording, logFile) {
+            isRecording = recording;
+            startBtn.disabled = recording;
+            stopBtn.disabled = !recording;
+            if (recording) {
+                statusSpan.innerHTML = '<span class="recording-dot"></span>Recording...';
+                downloadLinkDiv.innerHTML = '';
+            } else {
+                statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Idle</span>';
+                if (logFile) {
+                    downloadLinkDiv.innerHTML = `<a href="/download/${logFile}" class="btn btn-outline-primary" download><i class="bi bi-download"></i> Download ${logFile}</a>`;
+                }
+            }
+        }
+
+        startBtn.onclick = async () => {
+            startBtn.disabled = true;
+            statusSpan.innerHTML = '<span class="spinner-border text-primary"></span> Starting...';
+            const resp = await fetch('/start_recording', { method: 'POST' });
+            const data = await resp.json();
+            if (data.status === 'started') {
+                currentLogFile = data.log_file;
+                setRecordingUI(true, null);
+                pollInterval = setInterval(fetchLog, 1000);
+                fetchLog();
+            } else {
+                setRecordingUI(false, null);
+                alert('Recording is already running.');
+            }
+        };
+
+        stopBtn.onclick = async () => {
+            stopBtn.disabled = true;
+            statusSpan.innerHTML = '<span class="spinner-border text-danger"></span> Stopping...';
+            const resp = await fetch('/stop_recording', { method: 'POST' });
+            const data = await resp.json();
+            if (data.status === 'stopped') {
+                clearInterval(pollInterval);
+                setRecordingUI(false, currentLogFile);
+            }
+        };
+
+        async function fetchLog() {
+            const resp = await fetch('/log_data');
+            const rows = await resp.json();
+            if (!rows || rows.length === 0) {
+                logContainer.innerHTML = '<div class="text-center text-muted">No data yet.</div>';
+                return;
+            }
+            let table = logContainer.querySelector('table');
+            if (!table) {
+                logContainer.innerHTML = '<table class="table table-striped table-hover table-sm"><thead></thead><tbody></tbody></table>';
+                table = logContainer.querySelector('table');
+                const thead = table.querySelector('thead');
+                let headerHtml = '<tr>';
+                for (const key of Object.keys(rows[0])) {
+                    headerHtml += `<th>${key}</th>`;
+                }
+                headerHtml += '</tr>';
+                thead.innerHTML = headerHtml;
+            }
+            const tbody = table.querySelector('tbody');
+            let bodyHtml = '';
+            for (const row of rows.slice().reverse()) { // Show latest on top
+                bodyHtml += '<tr>';
+                for (const val of Object.values(row)) {
+                    bodyHtml += `<td>${val}</td>`;
+                }
+                bodyHtml += '</tr>';
+            }
+            tbody.innerHTML = bodyHtml;
+        }
+
+        // 2D Kalman filter controls and log
+        const startBtn2d = document.getElementById('start-btn-2d');
+        const stopBtn2d = document.getElementById('stop-btn-2d');
+        const statusSpan2d = document.getElementById('record-status-2d');
+        const downloadLinkDiv2d = document.getElementById('download-link-2d');
+        const logContainer2d = document.getElementById('log-container-2d');
+        let pollInterval2d = null;
+        let currentLogFile2d = null;
+        let isRecording2d = false;
+
+        function setRecordingUI2d(recording, logFile) {
+            isRecording2d = recording;
+            startBtn2d.disabled = recording;
+            stopBtn2d.disabled = !recording;
+            if (recording) {
+                statusSpan2d.innerHTML = '<span class="recording-dot"></span>Recording 2D...';
+                downloadLinkDiv2d.innerHTML = '';
+            } else {
+                statusSpan2d.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Idle</span>';
+                if (logFile) {
+                    downloadLinkDiv2d.innerHTML = `<a href="/download/${logFile}" class="btn btn-outline-primary" download><i class="bi bi-download"></i> Download ${logFile}</a>`;
+                }
+            }
+        }
+
+        startBtn2d.onclick = async () => {
+            startBtn2d.disabled = true;
+            statusSpan2d.innerHTML = '<span class="spinner-border text-primary"></span> Starting...';
+            const resp = await fetch('/start_recording_2d', { method: 'POST' });
+            const data = await resp.json();
+            if (data.status === 'started') {
+                currentLogFile2d = data.log_file;
+                setRecordingUI2d(true, null);
+                pollInterval2d = setInterval(fetchLog2d, 1000);
+                fetchLog2d();
+            } else {
+                setRecordingUI2d(false, null);
+                alert('2D Recording is already running.');
+            }
+        };
+
+        stopBtn2d.onclick = async () => {
+            stopBtn2d.disabled = true;
+            statusSpan2d.innerHTML = '<span class="spinner-border text-danger"></span> Stopping...';
+            const resp = await fetch('/stop_recording_2d', { method: 'POST' });
+            const data = await resp.json();
+            if (data.status === 'stopped') {
+                clearInterval(pollInterval2d);
+                setRecordingUI2d(false, currentLogFile2d);
+            }
+        };
+
+        async function fetchLog2d() {
+            if (!currentLogFile2d) return;
+            const resp = await fetch(`/get_log_data_2d/${currentLogFile2d}`);
+            const data = await resp.json();
+            if (!data.x || data.x.length === 0) {
+                logContainer2d.innerHTML = '<div class="text-center text-muted">No 2D data yet.</div>';
+                return;
+            }
+            // Build a table for 2D log data (show x, y, gps_x, gps_y, err_x, err_y, timestamp)
+            let table = logContainer2d.querySelector('table');
+            if (!table) {
+                logContainer2d.innerHTML = '<table class="table table-striped table-hover table-sm"><thead></thead><tbody></tbody></table>';
+                table = logContainer2d.querySelector('table');
+                const thead = table.querySelector('thead');
+                thead.innerHTML = '<tr><th>X</th><th>Y</th><th>GPS X</th><th>GPS Y</th><th>X Error</th><th>Y Error</th></tr>';
+            }
+            const tbody = table.querySelector('tbody');
+            let bodyHtml = '';
+            for (let i = data.x.length - 1; i >= 0; i--) { // Show latest on top
+                bodyHtml += '<tr>' +
+                    `<td>${data.x[i].toFixed(3)}</td>` +
+                    `<td>${data.y[i].toFixed(3)}</td>` +
+                    `<td>${data.gps_x[i] !== undefined ? data.gps_x[i].toFixed(3) : ''}</td>` +
+                    `<td>${data.gps_y[i] !== undefined ? data.gps_y[i].toFixed(3) : ''}</td>` +
+                    `<td>${data.err_x[i] !== undefined ? data.err_x[i].toFixed(3) : ''}</td>` +
+                    `<td>${data.err_y[i] !== undefined ? data.err_y[i].toFixed(3) : ''}</td>` +
+                    '</tr>';
+            }
+            tbody.innerHTML = bodyHtml;
+        }
+
+        // On page load, set to idle for both
+        setRecordingUI(false, null);
+        setRecordingUI2d(false, null);
+    </script>
+</body>
+</html>

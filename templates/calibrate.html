@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensor Calibration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; min-height: 100vh; }
+        .card { box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-radius: 0.5rem; }
+        .footer { color: #888; font-size: 0.95em; margin-top: 2rem; }
+        .status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 8px; }
+        .dot-ok { background: #198754; }
+        .dot-bad { background: #dc3545; }
+        .dot-mid { background: #ffc107; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold">Sensor Calibration</span>
+            <div>
+                <a class="btn btn-outline-secondary me-2" href="/">Home</a>
+                <a class="btn btn-outline-secondary me-2" href="/visualize">Visualize</a>
+                <a class="btn btn-outline-secondary me-2" href="/visualize2d">Visualize 2D</a>
+                <a class="btn btn-primary" href="/calibrate">Calibrate</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-7 col-md-9">
+                <div class="card p-4 mb-4">
+                    <h5 class="mb-3">IMU (BNO055) Calibration Status</h5>
+                    <div id="imu-status" class="mb-4"></div>
+                    <h5 class="mb-3">GPS (NEO6M) Status</h5>
+                    <div id="gps-status"></div>
+                </div>
+            </div>
+        </div>
+        <footer class="footer text-center">
+            <hr>
+            <span>Field Data Logging &mdash; <a href="/">Home</a></span>
+        </footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function dot(val, max=3) {
+            if (val === null || val === undefined) return '<span class="status-dot dot-bad"></span>';
+            if (val == max) return '<span class="status-dot dot-ok"></span>';
+            if (val >= Math.floor(max/2)) return '<span class="status-dot dot-mid"></span>';
+            return '<span class="status-dot dot-bad"></span>';
+        }
+        function fixText(fix) {
+            if (fix == 3) return '3D Fix';
+            if (fix == 2) return '2D Fix';
+            if (fix == 1) return 'No Fix';
+            return 'Unknown';
+        }
+        async function updateStatus() {
+            const resp = await fetch('/calibration_status');
+            const data = await resp.json();
+            // IMU
+            let imu = data.imu;
+            let imuHtml = `<b>System:</b> ${dot(imu.sys)} ${imu.sys ?? 'N/A'} &nbsp;` +
+                          `<b>Gyro:</b> ${dot(imu.gyro)} ${imu.gyro ?? 'N/A'} &nbsp;` +
+                          `<b>Accel:</b> ${dot(imu.accel)} ${imu.accel ?? 'N/A'} &nbsp;` +
+                          `<b>Mag:</b> ${dot(imu.mag)} ${imu.mag ?? 'N/A'}`;
+            if ([imu.sys, imu.gyro, imu.accel, imu.mag].every(x => x === 3)) {
+                imuHtml += '<div class="mt-2 text-success fw-bold">Fully Calibrated</div>';
+            } else {
+                imuHtml += '<div class="mt-2 text-warning">Move/rotate the sensor until all values are 3.</div>';
+            }
+            document.getElementById('imu-status').innerHTML = imuHtml;
+            // GPS
+            let gps = data.gps;
+            let gpsHtml = `<b>Fix Status:</b> ${fixText(gps.fix_type)} &nbsp; <b>Satellites:</b> ${gps.num_sats ?? 'N/A'}`;
+            if (gps.fix_type == 3) {
+                gpsHtml += '<div class="mt-2 text-success fw-bold">3D Fix Acquired</div>';
+            } else if (gps.fix_type == 2) {
+                gpsHtml += '<div class="mt-2 text-warning">Waiting for 3D fix...</div>';
+            } else {
+                gpsHtml += '<div class="mt-2 text-danger">No GPS fix. Check antenna and sky view.</div>';
+            }
+            document.getElementById('gps-status').innerHTML = gpsHtml;
+        }
+        setInterval(updateStatus, 1000);
+        updateStatus();
+    </script>
+</body>
+</html> 

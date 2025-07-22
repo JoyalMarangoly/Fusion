@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>2D Visualize Logs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { background: #f8f9fa; min-height: 100vh; }
+        .card { box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-radius: 0.5rem; }
+        .footer { color: #888; font-size: 0.95em; margin-top: 2rem; }
+        #plot2d { min-height: 60vh; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold">2D Log Visualization</span>
+            <div>
+                <a class="btn btn-outline-secondary me-2" href="/">Home</a>
+                <a class="btn btn-outline-secondary me-2" href="/visualize">3D Visualize</a>
+                <a class="btn btn-primary" href="/visualize2d">2D Visualize</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-8 col-md-10">
+                <div class="card p-4 mb-4">
+                    <div class="mb-3 d-flex align-items-center">
+                        <select id="log-select-2d" class="form-select me-2" style="max-width: 300px;"></select>
+                        <button id="plot-btn-2d" class="btn btn-primary">Plot</button>
+                        <span id="plot-spinner-2d" class="ms-3" style="display:none;"><span class="spinner-border spinner-border-sm"></span> Loading...</span>
+                    </div>
+                    <div id="plot2d"></div>
+                </div>
+            </div>
+        </div>
+        <footer class="footer text-center">
+            <hr>
+            <span>Field Data Logging &mdash; <a href="/">Home</a></span>
+        </footer>
+    </div>
+    <script>
+        const logSelect2d = document.getElementById('log-select-2d');
+        const plotBtn2d = document.getElementById('plot-btn-2d');
+        const plotDiv2d = document.getElementById('plot2d');
+        const plotSpinner2d = document.getElementById('plot-spinner-2d');
+
+        let hasPlotted2d = false;
+        async function loadLogList2d(selectedFile=null) {
+            const resp = await fetch('/list_logs_2d');
+            const logs = await resp.json();
+            logSelect2d.innerHTML = logs.map(log => `<option value=\"${log}\">${log}</option>`).join('');
+            if (logs.length > 0) {
+                if (selectedFile && logs.includes(selectedFile)) {
+                    logSelect2d.value = selectedFile;
+                } else {
+                    logSelect2d.value = logs[0];
+                }
+            } else {
+                plotDiv2d.innerHTML = '<div class="text-center text-muted">No log files found.</div>';
+            }
+            if (!plotBtn2d || !logSelect2d) {
+                console.error('Plot button or dropdown not found in DOM!');
+                return;
+            }
+            plotBtn2d.onclick = null;
+            plotBtn2d.onclick = () => {
+                console.log('Plot2D button clicked. Dropdown value:', logSelect2d.value);
+                plotLog2d(logSelect2d.value);
+            };
+            console.log('Plot2D button event handler set.');
+        }
+
+        async function plotLog2d(filename) {
+            if (!filename) {
+                plotDiv2d.innerHTML = '<div class="text-center text-danger">No file selected.</div>';
+                console.error('No filename provided to plotLog2d');
+                return;
+            }
+            console.log('Plotting 2D', filename);
+            plotSpinner2d.style.display = '';
+            plotDiv2d.innerHTML = '';
+            const url = `/get_log_data_2d/${filename}`;
+            console.log('Fetching:', url);
+            try {
+                const resp = await fetch(url);
+                const data = await resp.json();
+                console.log('Fetch response:', data);
+                plotSpinner2d.style.display = 'none';
+                if (!data.x || data.x.length === 0) {
+                    plotDiv2d.innerHTML = '<div class="text-center text-muted">No data to plot in this file.</div>';
+                    return;
+                }
+                // Only plot filter x vs y
+                const traceFilter = {
+                    x: data.x, y: data.y,
+                    mode: 'markers+lines', type: 'scatter',
+                    name: 'Filter Position',
+                    marker: { size: 4, color: '#007bff' }
+                };
+                const layout2d = {
+                    title: `2D Position (X vs Y) for ${filename}`,
+                    xaxis: { title: 'X (m)' },
+                    yaxis: { title: 'Y (m)' },
+                    margin: { l: 40, r: 20, b: 40, t: 40 },
+                    paper_bgcolor: '#fff',
+                    plot_bgcolor: '#fff',
+                    font: { family: 'sans-serif' }
+                };
+                // Purge the plot area before re-plotting
+                Plotly.purge('plot2d');
+                Plotly.react('plot2d', [traceFilter], layout2d);
+            } catch (e) {
+                plotSpinner2d.style.display = 'none';
+                plotDiv2d.innerHTML = '<div class="text-center text-danger">Error loading or plotting this file.</div>';
+                console.error('Error in plotLog2d:', e);
+            }
+        }
+
+        // Only set up event handler in loadLogList2d
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) loadLogList2d(logSelect2d.value);
+        });
+        loadLogList2d();
+    </script>
+</body>
+</html> 
